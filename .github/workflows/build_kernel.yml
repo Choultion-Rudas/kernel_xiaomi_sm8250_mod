@@ -1,75 +1,108 @@
-name: Build Xiaomi Mi 10 Release Kernel (ReSukiSU)
+name: Auto Sync & Build Release Kernel (Daily)
 
 on:
+  schedule:
+    - cron: '0 0 * * *' # 每天北京时间早上 8:00 自动检查一次
   workflow_dispatch:
     inputs:
-      tag_name:
-        description: "要编译的特定 Release Tag 标签（留空则自动获取最新 Release）"
+      force_build_tag:
+        description: "手动强制编译特定 Tag（留空则只在检测到新 Release 时运行）"
         required: false
         default: ""
 
+permissions:
+  contents: write
+
 jobs:
-  build-kernel:
+  check-and-build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Check for New Upstream Release
+        id: check
+        run: |
+          FORCE_TAG="${{ github.event.inputs.force_build_tag }}"
+          if [ -n "$FORCE_TAG" ]; then
+            echo "trigger_build=true" >> $GITHUB_OUTPUT
+            echo "target_tag=$FORCE_TAG" >> $GITHUB_OUTPUT
+          else
+            UPSTREAM_TAG=$(curl -s https://api.github.com/repos/liyafe1997/kernel_xiaomi_sm8250_mod/releases/latest | jq -r '.tag_name')
+            MY_TAG=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name' || echo "")
+            
+            if [ "$MY_TAG" = "null" ]; then MY_TAG=""; fi
+
+            if [ "$UPSTREAM_TAG" != "$MY_TAG" ] && [ -n "$UPSTREAM_TAG" ] && [ "$UPSTREAM_TAG" != "null" ]; then
+              echo "trigger_build=true" >> $GITHUB_OUTPUT
+              echo "target_tag=$UPSTREAM_TAG" >> $GITHUB_OUTPUT
+            else
+              echo "trigger_build=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Checkout Code
+        if: steps.check.outputs.trigger_build == 'true'
         uses: actions/checkout@v4
         with:
-          ref: android15-lineage22-mod # 必须先签出分支以获取本工作流文件
-          fetch-depth: 0              # 设为 0 以拉取所有历史 commit 和 Release Tag
+          ref: android15-lineage22-mod
+          fetch-depth: 0
 
-      - name: Checkout Specific Release Tag
+      - name: Sync and Checkout Target Tag
+        if: steps.check.outputs.trigger_build == 'true'
         run: |
-          TARGET_TAG="${{ github.event.inputs.tag_name }}"
-          if [ -z "$TARGET_TAG" ]; then
-            # 自动获取最近打上的一个 Git Tag 标签（对应最新 Release）
-            git fetch --tags
-            TARGET_TAG=$(git describe --tags --abbrev=0)
-          fi
-          echo "Target Release Tag to compile: $TARGET_TAG"
-          # 强行切换到该 Release 节点
+          TARGET_TAG="${{ steps.check.outputs.target_tag }}"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git remote add upstream https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod.git
+          git fetch upstream --tags
           git checkout "$TARGET_TAG"
+          git push origin "$TARGET_TAG" || echo "Tag already exists on origin"
 
       - name: Install Build Dependencies
+        if: steps.check.outputs.trigger_build == 'true'
         run: |
           sudo apt update
           sudo apt install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3
 
-      - name: Download and Extract Toolchain
+      - name: Download Toolchain
+        if: steps.check.outputs.trigger_build == 'true'
         run: |
           mkdir -p $HOME/proton-clang
           cd $HOME/proton-clang
           wget https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip
           unzip 20210522.zip
 
-      - name: Replace SukiSU-Ultra with ReSukiSU
+      - name: Replace SukiSU with ReSukiSU
+        if: steps.check.outputs.trigger_build == 'true'
         run: |
-          # 1. 使用正则模糊匹配，替换 build.sh 中 setup.sh 脚本的下载链接
           sed -i -E 's|https://github.com/liyafe1997/SukiSU-Ultra/raw/[a-f0-9]+/kernel/setup.sh|https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh|g' build.sh
-          
-          # 2. 替换传入的 commit 哈希参数为 ReSukiSU 的 main 分支
           sed -i -E 's/bash -s [a-f0-9]+/bash -s main/g' build.sh
 
-      - name: Inject ReSukiSU Configs (Multi-Manager)
+      - name: Inject ReSukiSU & Multi-Manager Configs
+        if: steps.check.outputs.trigger_build == 'true'
         run: |
-          # 注入非 GKI 必需的手动挂钩以及多管理器支持选项
           for config in arch/arm64/configs/vendor/umi_defconfig arch/arm64/configs/umi_defconfig; do
             if [ -f "$config" ]; then
               echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$config"
               echo "CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK=y" >> "$config"
-              echo "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" >> "$config" # 启用多管理器支持
-              echo "Successfully configured $config"
+              echo "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" >> "$config"
             fi
           done
 
-      - name: Execute Compile Script
+      - name: Compile Kernel
+        if: steps.check.outputs.trigger_build == 'true'
         run: |
-          # 运行原生编译脚本，生成卡刷包
           bash build.sh umi ksu
 
-      - name: Upload Compiled AnyKernel3 Flashable ZIPs
-        uses: actions/upload-artifact@v4
+      - name: Auto Publish Release
+        if: steps.check.outputs.trigger_build == 'true'
+        uses: softprops/action-gh-release@v3
         with:
-          name: Xiaomi-Mi10-ReSukiSU-Kernel
-          path: |
+          tag_name: ${{ steps.check.outputs.target_tag }}
+          name: "Xiaomi Mi 10 Kernel (${{ steps.check.outputs.target_tag }}) - ReSukiSU"
+          body: |
+            自动同步编译自上游 Release 版本: `${{ steps.check.outputs.target_tag }}`
+            已启用 ReSukiSU 以及多管理器（Multi-Manager）兼容支持。
+          draft: false
+          prerelease: false
+          files: |
             *.zip

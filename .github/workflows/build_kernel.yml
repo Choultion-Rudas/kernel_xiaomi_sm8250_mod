@@ -52,10 +52,13 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
+          # 添加原作者仓库并获取其所有标签
           git remote add upstream https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod.git
           git fetch upstream --tags
-          git checkout "$TARGET_TAG"
-          git push origin "$TARGET_TAG" || echo "Tag already exists on origin"
+          
+          # 显式指定 tags/ 前缀进行检出和推送，避免纯数字 tag 产生歧义
+          git checkout "tags/$TARGET_TAG"
+          git push origin "tags/$TARGET_TAG" || echo "Tag already exists on origin"
 
       - name: Install Build Dependencies
         if: steps.check.outputs.trigger_build == 'true'
@@ -71,26 +74,10 @@ jobs:
           wget https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip
           unzip 20210522.zip
 
-      - name: Replace SukiSU with ReSukiSU
-        if: steps.check.outputs.trigger_build == 'true'
-        run: |
-          sed -i -E 's|https://github.com/liyafe1997/SukiSU-Ultra/raw/[a-f0-9]+/kernel/setup.sh|https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh|g' build.sh
-          sed -i -E 's/bash -s [a-f0-9]+/bash -s main/g' build.sh
-
-      - name: Inject ReSukiSU & Multi-Manager Configs
-        if: steps.check.outputs.trigger_build == 'true'
-        run: |
-          for config in arch/arm64/configs/vendor/umi_defconfig arch/arm64/configs/umi_defconfig; do
-            if [ -f "$config" ]; then
-              echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$config"
-              echo "CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK=y" >> "$config"
-              echo "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" >> "$config"
-            fi
-          done
-
       - name: Compile Kernel
         if: steps.check.outputs.trigger_build == 'true'
         run: |
+          # 运行完全原生的编译指令，不做任何 build.sh 替换
           bash build.sh umi ksu
 
       - name: Auto Publish Release
@@ -98,10 +85,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.check.outputs.target_tag }}
-          name: "Xiaomi Mi 10 Kernel (${{ steps.check.outputs.target_tag }}) - ReSukiSU"
+          name: "Xiaomi Mi 10 Kernel (${{ steps.check.outputs.target_tag }}) - SukiSU"
           body: |
             自动同步编译自上游 Release 版本: `${{ steps.check.outputs.target_tag }}`
-            已启用 ReSukiSU 以及多管理器（Multi-Manager）兼容支持。
+            原版内核级 SukiSU-Ultra 驱动，完美兼容并支持 ReSukiSU 客户端接管。
           draft: false
           prerelease: false
           files: |

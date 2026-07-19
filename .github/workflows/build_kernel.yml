@@ -1,0 +1,75 @@
+name: Build Xiaomi Mi 10 Release Kernel (ReSukiSU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "要编译的特定 Release Tag 标签（留空则自动获取最新 Release）"
+        required: false
+        default: ""
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: android15-lineage22-mod # 必须先签出分支以获取本工作流文件
+          fetch-depth: 0              # 设为 0 以拉取所有历史 commit 和 Release Tag
+
+      - name: Checkout Specific Release Tag
+        run: |
+          TARGET_TAG="${{ github.event.inputs.tag_name }}"
+          if [ -z "$TARGET_TAG" ]; then
+            # 自动获取最近打上的一个 Git Tag 标签（对应最新 Release）
+            git fetch --tags
+            TARGET_TAG=$(git describe --tags --abbrev=0)
+          fi
+          echo "Target Release Tag to compile: $TARGET_TAG"
+          # 强行切换到该 Release 节点
+          git checkout "$TARGET_TAG"
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3
+
+      - name: Download and Extract Toolchain
+        run: |
+          mkdir -p $HOME/proton-clang
+          cd $HOME/proton-clang
+          wget https://github.com/kdrag0n/proton-clang/archive/refs/tags/20210522.zip
+          unzip 20210522.zip
+
+      - name: Replace SukiSU-Ultra with ReSukiSU
+        run: |
+          # 1. 使用正则模糊匹配，替换 build.sh 中 setup.sh 脚本的下载链接
+          sed -i -E 's|https://github.com/liyafe1997/SukiSU-Ultra/raw/[a-f0-9]+/kernel/setup.sh|https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh|g' build.sh
+          
+          # 2. 替换传入的 commit 哈希参数为 ReSukiSU 的 main 分支
+          sed -i -E 's/bash -s [a-f0-9]+/bash -s main/g' build.sh
+
+      - name: Inject ReSukiSU Configs (Multi-Manager)
+        run: |
+          # 注入非 GKI 必需的手动挂钩以及多管理器支持选项
+          for config in arch/arm64/configs/vendor/umi_defconfig arch/arm64/configs/umi_defconfig; do
+            if [ -f "$config" ]; then
+              echo "CONFIG_KSU_MANUAL_HOOK=y" >> "$config"
+              echo "CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK=y" >> "$config"
+              echo "CONFIG_KSU_MULTI_MANAGER_SUPPORT=y" >> "$config" # 启用多管理器支持
+              echo "Successfully configured $config"
+            fi
+          done
+
+      - name: Execute Compile Script
+        run: |
+          # 运行原生编译脚本，生成卡刷包
+          bash build.sh umi ksu
+
+      - name: Upload Compiled AnyKernel3 Flashable ZIPs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xiaomi-Mi10-ReSukiSU-Kernel
+          path: |
+            *.zip

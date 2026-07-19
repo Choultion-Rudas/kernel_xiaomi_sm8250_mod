@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   check-and-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Check for New Upstream Release
         id: check
@@ -52,11 +52,9 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # 添加原作者仓库并获取其所有标签
           git remote add upstream https://github.com/liyafe1997/kernel_xiaomi_sm8250_mod.git
           git fetch upstream --tags
           
-          # 显式指定 tags/ 前缀进行检出和推送，避免纯数字 tag 产生歧义
           git checkout "tags/$TARGET_TAG"
           git push origin "tags/$TARGET_TAG" || echo "Tag already exists on origin"
 
@@ -64,11 +62,7 @@ jobs:
         if: steps.check.outputs.trigger_build == 'true'
         run: |
           sudo apt update
-          sudo apt install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3 libncurses-dev
-          
-          # 建立软链接，解决 Ubuntu 24.04 缺少 libncurses5 和 libtinfo5 导致 Clang 编译器无法启动的问题
-          sudo ln -s /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
-          sudo ln -s /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
+          sudo apt install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3 libncurses5
 
       - name: Download Toolchain
         if: steps.check.outputs.trigger_build == 'true'
@@ -81,7 +75,6 @@ jobs:
       - name: Compile Kernel
         if: steps.check.outputs.trigger_build == 'true'
         run: |
-          # 运行完全原生的编译指令，不做任何 build.sh 替换
           bash build.sh umi ksu
 
       - name: Auto Publish Release

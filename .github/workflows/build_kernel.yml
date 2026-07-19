@@ -64,7 +64,11 @@ jobs:
         if: steps.check.outputs.trigger_build == 'true'
         run: |
           sudo apt update
-          sudo apt install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3
+          sudo apt install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3 libncurses-dev
+          
+          # 建立软链接，解决 Ubuntu 24.04 缺少 libncurses5 和 libtinfo5 导致 Clang 编译器无法启动的问题
+          sudo ln -s /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5
+          sudo ln -s /usr/lib/x86_64-linux-gnu/libncurses.so.6 /usr/lib/x86_64-linux-gnu/libncurses.so.5
 
       - name: Download Toolchain
         if: steps.check.outputs.trigger_build == 'true'
